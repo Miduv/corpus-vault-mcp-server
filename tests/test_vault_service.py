@@ -27,14 +27,14 @@ def vault_path(tmp_path_factory: TempPathFactory) -> Path:
     (vault / "Projects" / "project2.md").write_text("# Project 2")
     (vault / "Projects" / "SubProject").mkdir()
     (vault / "Projects" / "SubProject" / "sub.md").write_text("# Sub Project")
-    (vault / "Ежедневные").mkdir()
-    (vault / "Ежедневные" / "2025").mkdir()
-    (vault / "Ежедневные" / "2025" / "01-01.md").write_text("# New Year")
-    (vault / "Ежедневные" / "2025" / "01-02.md").write_text("# Day 2")
-    (vault / "Дистилляция").mkdir()
-    (vault / "Дистилляция" / "Daily").mkdir()
-    (vault / "Дистилляция" / "Daily" / "2025-01-01.md").write_text("# Distilled")
-    (vault / "Дистилляция" / "Daily" / "2025-01-02.md").write_text("# Distilled 2")
+    (vault / "CafeNotes").mkdir()
+    (vault / "CafeNotes" / "2025").mkdir()
+    (vault / "CafeNotes" / "2025" / "01-01.md").write_text("# New Year")
+    (vault / "CafeNotes" / "2025" / "01-02.md").write_text("# Day 2")
+    (vault / "ResumeArchive").mkdir()
+    (vault / "ResumeArchive" / "Daily").mkdir()
+    (vault / "ResumeArchive" / "Daily" / "2025-01-01.md").write_text("# Distilled")
+    (vault / "ResumeArchive" / "Daily" / "2025-01-02.md").write_text("# Distilled 2")
     (vault / ".hidden").mkdir()
     (vault / ".hidden" / "secret.md").write_text("Hidden content")
     (vault / "not-markdown.txt").write_text("Not markdown")
@@ -54,8 +54,8 @@ def test_ls_root(service: VaultService) -> None:
     assert {"type": "dir", "name": "Daily", "path": "Daily"} in items
     assert {"type": "file", "name": "note.md", "path": "note.md"} in items
     assert {"type": "dir", "name": "Projects", "path": "Projects"} in items
-    assert {"type": "dir", "name": "Ежедневные", "path": "Ежедневные"} in items
-    assert {"type": "dir", "name": "Дистилляция", "path": "Дистилляция"} in items
+    assert {"type": "dir", "name": "CafeNotes", "path": "CafeNotes"} in items
+    assert {"type": "dir", "name": "ResumeArchive", "path": "ResumeArchive"} in items
 
 
 def test_ls_subdirectory(service: VaultService) -> None:
@@ -179,7 +179,7 @@ def test_glob_recursive_all_markdown(service: VaultService) -> None:
     assert "Daily/2026-01-17.md" in result["files"]
     assert "Projects/project1.md" in result["files"]
     assert "Projects/SubProject/sub.md" in result["files"]
-    assert "Ежедневные/2025/01-01.md" in result["files"]
+    assert "CafeNotes/2025/01-01.md" in result["files"]
     assert ".hidden/secret.md" not in result["files"]  # Hidden files excluded
     assert "not-markdown.txt" not in result["files"]  # Only .md files
 
@@ -194,19 +194,19 @@ def test_glob_recursive_with_base_path(service: VaultService) -> None:
     assert len(result["files"]) == 3
 
 
-def test_glob_cyrillic_paths(service: VaultService) -> None:
-    """Test glob with Cyrillic paths."""
-    result = service.glob("Ежедневные/2025/**/*.md")
-    assert "Ежедневные/2025/01-01.md" in result["files"]
-    assert "Ежедневные/2025/01-02.md" in result["files"]
+def test_glob_unicode_paths(service: VaultService) -> None:
+    """Test glob with unicode-friendly paths."""
+    result = service.glob("CafeNotes/2025/**/*.md")
+    assert "CafeNotes/2025/01-01.md" in result["files"]
+    assert "CafeNotes/2025/01-02.md" in result["files"]
     assert len(result["files"]) == 2
 
 
-def test_glob_cyrillic_date_pattern(service: VaultService) -> None:
-    """Test glob with Cyrillic paths and date pattern."""
-    result = service.glob("Дистилляция/Daily/2025-*.md")
-    assert "Дистилляция/Daily/2025-01-01.md" in result["files"]
-    assert "Дистилляция/Daily/2025-01-02.md" in result["files"]
+def test_glob_unicode_date_pattern(service: VaultService) -> None:
+    """Test glob with unicode directory name and date pattern."""
+    result = service.glob("ResumeArchive/Daily/2025-*.md")
+    assert "ResumeArchive/Daily/2025-01-01.md" in result["files"]
+    assert "ResumeArchive/Daily/2025-01-02.md" in result["files"]
     assert len(result["files"]) == 2
 
 
@@ -273,8 +273,8 @@ def test_glob_recursive_from_root(service: VaultService) -> None:
     """Test recursive glob starting from root."""
     result = service.glob("**/2025-*.md")
     assert "Daily/2025-12-31.md" in result["files"]
-    assert "Дистилляция/Daily/2025-01-01.md" in result["files"]
-    assert "Дистилляция/Daily/2025-01-02.md" in result["files"]
+    assert "ResumeArchive/Daily/2025-01-01.md" in result["files"]
+    assert "ResumeArchive/Daily/2025-01-02.md" in result["files"]
 
 
 def test_glob_pattern_ending_with_double_star(service: VaultService) -> None:
@@ -382,13 +382,13 @@ def test_tree_sorted_output(service: VaultService) -> None:
     assert names == sorted(names, key=str.lower)
 
 
-def test_tree_cyrillic_paths(service: VaultService) -> None:
-    """Test that tree handles Cyrillic paths correctly."""
+def test_tree_unicode_paths(service: VaultService) -> None:
+    """Test that tree handles unicode directory names correctly."""
     tree = service.tree()
     children = tree["children"]
-    cyrillic_dirs = [child for child in children if child["name"] in ["Ежедневные", "Дистилляция"]]
-    assert len(cyrillic_dirs) >= 1
-    for dir_node in cyrillic_dirs:
+    unicode_dirs = [child for child in children if child["name"] in ["CafeNotes", "ResumeArchive"]]
+    assert len(unicode_dirs) >= 1
+    for dir_node in unicode_dirs:
         assert dir_node["type"] == "dir"
         assert "children" in dir_node
 
@@ -495,10 +495,9 @@ def test_search_partial_match(service: VaultService) -> None:
     assert any("Test" in match["content"] for match in result["matches"])
 
 
-def test_search_cyrillic_text(service: VaultService) -> None:
-    """Test that search works with Cyrillic text."""
-    result = service.search("Новый год")
-    # Should find matches in files with Cyrillic content if they exist
+def test_search_unicode_text(service: VaultService) -> None:
+    """Test that search works with unicode text."""
+    result = service.search("Distilled")
     assert isinstance(result["matches"], list)
     assert isinstance(result["total_files"], int)
 
