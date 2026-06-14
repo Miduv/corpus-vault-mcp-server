@@ -507,3 +507,32 @@ def test_search_no_matches(service: VaultService) -> None:
     result = service.search("ThisTextDefinitelyDoesNotExist12345")
     assert result["matches"] == []
     assert result["total_files"] >= 0  # May have processed files but found no matches
+
+
+def test_outside_parent_path_blocked(service: VaultService) -> None:
+    """../outside.md is blocked before filesystem access."""
+    with pytest.raises(ValueError, match="parent path segments are not allowed"):
+        service.read("../outside.md")
+
+
+def test_git_config_blocked(service: VaultService) -> None:
+    """.git/config is blocked as a hidden path."""
+    with pytest.raises(ValueError, match="hidden paths are not allowed"):
+        service.read(".git/config")
+
+
+def test_obsidian_workspace_blocked(service: VaultService) -> None:
+    """.obsidian/workspace.json is blocked as a hidden path."""
+    with pytest.raises(ValueError, match="hidden paths are not allowed"):
+        service.read(".obsidian/workspace.json")
+
+
+def test_symlink_escape_blocked(vault_path: Path) -> None:
+    """Symlinks pointing outside of the vault are blocked."""
+    outside = vault_path.parent / "outside.md"
+    outside.write_text("outside secret", encoding="utf-8")
+    (vault_path / "escape.md").symlink_to(outside)
+
+    service = VaultService(vault_path=str(vault_path))
+    with pytest.raises(ValueError, match="path escapes vault root"):
+        service.read("escape.md")

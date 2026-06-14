@@ -5,6 +5,8 @@ from itertools import chain
 from pathlib import Path
 from typing import Any
 
+from app.vault.path_policy import PathPolicy
+
 
 class VaultService:
     """Service layer for interacting with an Obsidian vault on disk.
@@ -14,107 +16,38 @@ class VaultService:
 
     def __init__(self, vault_path: str) -> None:
         self.vault_path = vault_path
+        self._policy = PathPolicy(vault_path)
 
     def ls(self, path: str = "") -> list[dict[str, str]]:
-        """List directories and markdown files inside the vault.
-
-        Rules:
-        - `path` must be a relative path inside the vault.
-        - Hidden entries (starting with ".") are excluded.
-        - Files are limited to `.md`. Directories are always included.
-
-        Returns a list of items like:
-        - {"type": "dir", "name": "Daily", "path": "Daily"}
-        - {"type": "file", "name": "note.md", "path": "Daily/note.md"}
-        """
-        base, target = self._resolve_inside_vault(path)
-        self._ensure_dir(target)
+        """List directories and markdown files inside the vault."""
+        base = self._policy.base
+        target = self._policy.validate_ls_path(path)
         return self._list_dir(base=base, target=target)
 
     def read(self, path: str) -> str:
-        """Read a markdown file inside the vault and return its content.
-
-        Rules:
-        - `path` must be a relative path inside the vault.
-        - Hidden entries (any path component starting with ".") are excluded.
-        - Only `.md` files are allowed.
-        """
+        """Read a markdown file inside the vault and return its content."""
         if not path or not path.strip():
             raise ValueError("path must be non-empty")
-
-        relative = Path(path)
-        if any(self._is_hidden(part) for part in relative.parts):
-            raise ValueError("hidden paths are not allowed")
-
-        base, target = self._resolve_inside_vault(path)
-        self._ensure_file(target)
-
-        if not self._is_markdown(target):
-            raise ValueError("only .md files are allowed")
-
+        target = self._policy.validate_read_path(path)
         return target.read_text(encoding="utf-8")
 
     def write(self, path: str, content: str) -> None:
         """Write markdown content to a file inside the vault.
 
-        Rules:
-        - `path` must be a relative path inside the vault.
-        - Hidden entries (any path component starting with ".") are excluded.
-        - Only `.md` files are allowed.
-        - Parent directories are created automatically.
-        - Existing files are overwritten.
+        Kept for future controlled-write modes; public MCP write access is disabled
+        by default and must be gated before calling this method.
         """
         if not path or not path.strip():
             raise ValueError("path must be non-empty")
-
-        relative = Path(path)
-        if any(self._is_hidden(part) for part in relative.parts):
-            raise ValueError("hidden paths are not allowed")
-
-        base, target = self._resolve_inside_vault(path)
-
-        if not self._is_markdown(target):
-            raise ValueError("only .md files are allowed")
-
+        target = self._policy.validate_write_path(path)
         if target.exists() and target.is_dir():
             raise IsADirectoryError(str(target))
-
-        target.parent.mkdir(parents=True, exist_ok=True)
-
-        # Ensure parent directory stays inside the vault root.
-        if target.parent != base and base not in target.parent.parents:
-            raise ValueError("path escapes vault root")
-
         target.write_text(content, encoding="utf-8")
 
     def _resolve_inside_vault(self, path: str) -> tuple[Path, Path]:
-        """Resolve a user-supplied relative path inside the vault.
-
-        This helper intentionally does NOT call `resolve()` on the target path.
-        Calling `resolve()` would dereference symlinks / normalize `..` which can
-        change the meaning of the path and potentially allow escaping the vault.
-
-        Returns:
-            (base, target) where:
-            - base is an absolute resolved vault root.
-            - target is the joined path (base / path), kept as-is.
-
-        Raises:
-            ValueError: if `path` is absolute or would escape the vault root.
-        """
-        if Path(path).is_absolute():
-            raise ValueError("path must be relative")
-
-        base = Path(self.vault_path).resolve()
-        target = base / path
-
-        # Проверка на выход за пределы vault
-        try:
-            target.relative_to(base)
-        except ValueError as e:
-            raise ValueError("path escapes vault root") from e
-
-        return base, target
+        """Compatibility wrapper around the centralized path policy."""
+        target = self._policy.validate_ls_path(path)
+        return self._policy.base, target
 
     def _ensure_dir(self, path: Path) -> None:
         """Ensure `path` exists and is a directory.
@@ -172,21 +105,8 @@ class VaultService:
         Returns:
             Dictionary with "files" and "dirs" lists of relative paths.
         """
-        if not pattern or not pattern.strip():
-            raise ValueError("pattern must be non-empty")
-
-        pattern_path = Path(pattern)
-
-        # Check that pattern doesn't escape the vault.
-        if pattern_path.is_absolute() or ".." in pattern_path.parts:
-            raise ValueError("pattern must be relative and not escape vault")
-
-        # Check that pattern doesn't contain hidden path components.
-        pattern_parts = (p for p in pattern_path.parts if p not in (".", ".."))
-        if any(self._is_hidden(part) for part in pattern_parts):
-            raise ValueError("hidden paths are not allowed in pattern")
-
-        base = Path(self.vault_path).resolve()
+        pattern = self._policy.validate_glob_pattern(pattern)
+        base = self._policy.base
 
         # Perform glob search from vault root
         files: list[str] = []
@@ -202,7 +122,7 @@ class VaultService:
 
             if base_pattern:
                 # Resolve base path and ensure it's inside vault
-                _, base_dir = self._resolve_inside_vault(base_pattern)
+                base_dir = self._policy.validate_ls_path(base_pattern)
 
                 # Use rglob with suffix pattern
                 if suffix_pattern:
@@ -218,23 +138,14 @@ class VaultService:
             matches = base.glob(pattern)
 
         for match in matches:
-            # Ensure result is inside vault (safety check)
-            try:
-                relative_path = match.relative_to(base)
-            except ValueError:
-                # Skip if outside vault (shouldn't happen with proper pattern, but safety check)
+            if not self._policy.is_allowed_existing_result(match):
                 continue
+            resolved_match = match.resolve(strict=True)
+            posix_path = self._policy.relative_posix(resolved_match)
 
-            # Skip hidden entries
-            if any(self._is_hidden(part) for part in relative_path.parts):
-                continue
-
-            # Convert to POSIX-style relative path
-            posix_path = relative_path.as_posix()
-
-            if match.is_file() and self._is_markdown(match):
+            if resolved_match.is_file():
                 files.append(posix_path)
-            elif match.is_dir():
+            elif resolved_match.is_dir():
                 dirs.append(posix_path)
 
         # Sort for stable output
@@ -253,16 +164,16 @@ class VaultService:
         items: list[dict[str, str]] = []
 
         for entry in sorted(target.iterdir(), key=lambda p: p.name.lower()):
-            name = entry.name
-            if self._is_hidden(name):
+            if not self._policy.is_allowed_existing_result(entry):
                 continue
 
-            if entry.is_dir():
-                items.append(self._to_item(base, entry, "dir"))
+            resolved_entry = entry.resolve(strict=True)
+            if resolved_entry.is_dir():
+                items.append(self._to_item(base, resolved_entry, "dir"))
                 continue
 
-            if entry.is_file() and self._is_markdown(entry):
-                items.append(self._to_item(base, entry, "file"))
+            if resolved_entry.is_file():
+                items.append(self._to_item(base, resolved_entry, "file"))
 
         return items
 
@@ -279,7 +190,7 @@ class VaultService:
             Nested dictionary structure with "name", "path", "type", and "children" keys.
             Root node has name "root", path "", and type "dir".
         """
-        base = Path(self.vault_path).resolve()
+        base = self._policy.validate_tree_root()
         return self._build_tree(base, base, "")
 
     def _build_tree(self, base: Path, current: Path, relative_path: str) -> dict[str, Any]:
@@ -299,22 +210,21 @@ class VaultService:
         entries = sorted(current.iterdir(), key=lambda p: p.name.lower())
 
         for entry in entries:
-            # Skip hidden entries
-            if self._is_hidden(entry.name):
+            if not self._policy.is_allowed_existing_result(entry):
                 continue
 
-            # Calculate relative path for this entry
-            entry_relative = entry.relative_to(base).as_posix()
+            resolved_entry = entry.resolve(strict=True)
+            entry_relative = self._policy.relative_posix(resolved_entry)
 
-            if entry.is_dir():
+            if resolved_entry.is_dir():
                 # Recursively build tree for subdirectory
-                child_tree = self._build_tree(base, entry, entry_relative)
+                child_tree = self._build_tree(base, resolved_entry, entry_relative)
                 children.append(child_tree)
-            elif entry.is_file() and self._is_markdown(entry):
+            elif resolved_entry.is_file():
                 # Add markdown file
                 children.append(
                     {
-                        "name": entry.name,
+                        "name": resolved_entry.name,
                         "path": entry_relative,
                         "type": "file",
                     }
@@ -352,20 +262,20 @@ class VaultService:
         if not query or not query.strip():
             raise ValueError("query must be non-empty")
 
-        base = Path(self.vault_path).resolve()
+        base = self._policy.validate_search_root()
         matches: list[dict[str, Any]] = []
         processed_files = 0
 
         # Recursively find all markdown files
         for file_path in base.rglob("*.md"):
-            # Skip hidden files
-            relative_path = file_path.relative_to(base)
-            if any(self._is_hidden(part) for part in relative_path.parts):
+            if not self._policy.is_allowed_existing_result(file_path, allow_dir=False):
                 continue
+            resolved_file_path = file_path.resolve(strict=True)
+            relative_path = resolved_file_path.relative_to(base)
 
             try:
                 # Read file content
-                content = file_path.read_text(encoding="utf-8")
+                content = resolved_file_path.read_text(encoding="utf-8")
                 lines = content.splitlines()
                 processed_files += 1
 

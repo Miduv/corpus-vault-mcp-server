@@ -26,6 +26,21 @@ from app.mcp.oauth import (
 )
 from app.vault.service import VaultService
 
+READ_ONLY_MODE = "read_only"
+WRITE_MODE = "write"
+
+
+def _access_mode() -> str:
+    return os.getenv("MCP_ACCESS_MODE", READ_ONLY_MODE).strip().lower() or READ_ONLY_MODE
+
+
+def _writes_allowed() -> bool:
+    return _access_mode() == WRITE_MODE
+
+
+def _sse_without_oauth_is_production_safe() -> bool:
+    return False
+
 # NOTE: For Cloudflare Quick Tunnel the public hostname changes often, which
 # clashes with DNS rebinding protection allowlists. We'll disable it for now.
 mcp = FastMCP(
@@ -78,9 +93,11 @@ def vault_read(path: str) -> dict[str, str]:
         raise ValueError(_safe_error_message(e)) from None
 
 
-@mcp.tool()
-def vault_write(path: str, content: str) -> dict[str, bool]:
-    """Create or overwrite a markdown file inside the vault."""
+def _vault_write_controlled(path: str, content: str) -> dict[str, bool]:
+    """Isolated write path for future controlled-write modes; not a public MCP tool."""
+    if not _writes_allowed():
+        raise PermissionError("write operations are disabled in read-only mode")
+
     svc = _get_vault_service()
     try:
         svc.write(path=path, content=content)
@@ -229,7 +246,8 @@ if __name__ == "__main__":
             # No authentication mode
             app = mcp_app
             print(
-                "WARNING: OAuth is disabled - SSE server running without authentication",
+                "WARNING: OAuth is disabled - SSE server running without authentication; "
+                "this mode is not production-safe",
                 file=sys.stderr,
                 flush=True,
             )
