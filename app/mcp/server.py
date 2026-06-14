@@ -24,10 +24,13 @@ from app.mcp.oauth import (
     create_protected_resource_metadata_endpoint,
     create_token_endpoint,
 )
+from app.mcp.profiles import (
+    READ_ONLY_MODE,
+    WRITE_MODE,
+    assert_no_public_write_tools,
+    validate_startup_profile,
+)
 from app.vault.service import VaultService
-
-READ_ONLY_MODE = "read_only"
-WRITE_MODE = "write"
 
 
 def _access_mode() -> str:
@@ -38,8 +41,17 @@ def _writes_allowed() -> bool:
     return _access_mode() == WRITE_MODE
 
 
+def _registered_tool_names() -> list[str]:
+    return list(mcp._tool_manager._tools)
+
+
+def _validate_no_public_write_tools() -> None:
+    assert_no_public_write_tools(_registered_tool_names())
+
+
 def _sse_without_oauth_is_production_safe() -> bool:
     return False
+
 
 # NOTE: For Cloudflare Quick Tunnel the public hostname changes often, which
 # clashes with DNS rebinding protection allowlists. We'll disable it for now.
@@ -178,28 +190,32 @@ def vault_search(query: str, case_sensitive: bool = False) -> dict[str, Any]:
 if __name__ == "__main__":
     import sys
 
-    # Check environment variable to determine transport mode
-    transport_mode = os.getenv("MCP_TRANSPORT", "sse")
+    profile = validate_startup_profile()
+    _validate_no_public_write_tools()
 
-    if transport_mode == "stdio":
+    if profile.transport == "stdio":
         # stdio mode for direct MCP client connection
         mcp.run(transport="stdio")
     else:
         # SSE mode for network access (default for Docker)
         host = os.getenv("MCP_HOST", "0.0.0.0")
         port = int(os.getenv("MCP_PORT", "8001"))
-        use_oauth = os.getenv("MCP_OAUTH_ENABLED", "false").lower() == "true"
+        use_oauth = profile.oauth_enabled
 
         # Create SSE app
         mcp_app = mcp.sse_app()
 
         if use_oauth:
             # ChatGPT MCP OAuth 2.1 with PKCE
-            issuer = os.getenv("MCP_OAUTH_ISSUER", f"http://localhost:{port}")
+            issuer = profile.oauth_issuer or os.getenv(
+                "MCP_OAUTH_ISSUER", f"http://localhost:{port}"
+            )
             static_client_id = os.getenv("MCP_OAUTH_CLIENT_ID")
             static_client_secret = os.getenv("MCP_OAUTH_CLIENT_SECRET")
 
-            print("OAuth 2.1 (Authorization Code + PKCE) for ChatGPT MCP", file=sys.stderr, flush=True)
+            print(
+                "OAuth 2.1 (Authorization Code + PKCE) for ChatGPT MCP", file=sys.stderr, flush=True
+            )
 
             oauth_store = OAuthStore(
                 allow_any_client=False,
@@ -240,19 +256,24 @@ if __name__ == "__main__":
 
             print(f"OAuth issuer: {issuer}", file=sys.stderr, flush=True)
             print(f"Protected Resource: {metadata_uri}", file=sys.stderr, flush=True)
-            print(f"Authorization Server: {issuer}/.well-known/oauth-authorization-server", file=sys.stderr, flush=True)
-            print("Endpoints: /oauth/authorize, /oauth/token, /oauth/register", file=sys.stderr, flush=True)
-        else:
-            # No authentication mode
-            app = mcp_app
             print(
-                "WARNING: OAuth is disabled - SSE server running without authentication; "
-                "this mode is not production-safe",
+                f"Authorization Server: {issuer}/.well-known/oauth-authorization-server",
                 file=sys.stderr,
                 flush=True,
             )
+            print(
+                "Endpoints: /oauth/authorize, /oauth/token, /oauth/register",
+                file=sys.stderr,
+                flush=True,
+            )
+        else:
+            # No authentication mode
+            app = mcp_app
+            if profile.warning:
+                print("=" * 72, file=sys.stderr, flush=True)
+                print(profile.warning, file=sys.stderr, flush=True)
+                print("NOT PRODUCTION-SAFE", file=sys.stderr, flush=True)
+                print("=" * 72, file=sys.stderr, flush=True)
 
         print(f"Starting MCP SSE server on {host}:{port}", file=sys.stderr, flush=True)
         uvicorn.run(app, host=host, port=port, log_level="info")
-
-

@@ -15,7 +15,7 @@ Connect your Obsidian vault to any LLM via MCP - read, write, and manage notes w
 
 ## ✨ Features
 
-- 📝 **Read & Write** - Access and modify your Obsidian notes from any LLM
+- 📝 **Read-only by default** - Safely inspect your Obsidian notes from MCP clients
 - 🗂️ **Navigate** - Browse folders and files in your vault
 - 🤖 **AI-Powered** - Let AI help you organize and create notes
 - 🔌 **MCP Protocol** - Compatible with any MCP-supported LLM client
@@ -24,6 +24,19 @@ Connect your Obsidian vault to any LLM via MCP - read, write, and manage notes w
 - ⚡ **Two Modes** - stdio for direct connection, SSE for network access
 
 ---
+
+
+## 🔐 Профили безопасного запуска
+
+Сервер запускается только через явный профиль `MCP_PROFILE` и отказывается стартовать при опасной или неполной конфигурации. Запись публичными MCP-инструментами отключена во всех текущих профилях; `vault_write` не экспортируется.
+
+| Профиль | Назначение | Обязательные переменные | OAuth | Статус |
+|---|---|---|---|---|
+| `local-stdio-readonly` | Локальный stdio для Cursor/Claude и первого теста на копии vault | `MCP_TRANSPORT=stdio`, `MCP_ACCESS_MODE=read_only` | Не требуется | Без сетевого доступа |
+| `sse-dev` | Локальная разработка SSE | `MCP_TRANSPORT=sse`, `MCP_ACCESS_MODE=read_only`, `MCP_OAUTH_ENABLED=false` | Отключён только явно | **Not production-safe** |
+| `sse-oauth` | SSE с авторизацией | `MCP_TRANSPORT=sse`, `MCP_OAUTH_ENABLED=true`, `MCP_OAUTH_ISSUER=https://...` | Обязателен | Для сетевого режима |
+
+Fail-closed правила: неизвестный `MCP_PROFILE` завершает запуск; `MCP_TRANSPORT=sse` без OAuth разрешён только в профиле `sse-dev`; `sse-oauth` без `MCP_OAUTH_ISSUER` не стартует; read-only профили не должны содержать публичные write/apply tools.
 
 ## 🚀 Quick Start
 
@@ -73,7 +86,9 @@ Example configuration (replace `/path/to/your/vault` with your actual vault path
         "run",
         "--rm",
         "-i",
+        "-e", "MCP_PROFILE=local-stdio-readonly",
         "-e", "MCP_TRANSPORT=stdio",
+        "-e", "MCP_ACCESS_MODE=read_only",
         "-v", "/path/to/your/vault:/vault",
         "obsidian-agent-mcp"
       ]
@@ -113,7 +128,9 @@ nano .env
 Configuration for ChatGPT:
 ```bash
 OBSIDIAN_VAULT_PATH=/path/to/your/vault
+MCP_PROFILE=sse-oauth
 MCP_TRANSPORT=sse
+MCP_ACCESS_MODE=read_only
 MCP_PORT=8001
 
 # OAuth 2.1 for ChatGPT (required)
@@ -177,7 +194,6 @@ Try these commands in your LLM client:
 
 - `"Show all notes in my vault"` - Uses `vault_ls` or `vault_tree`
 - `"Read my daily note for today"` - Uses `vault_read`
-- `"Create a new note about project ideas"` - Uses `vault_write`
 - `"List all notes in the Projects folder"` - Uses `vault_ls`
 - `"Find all notes from 2025"` - Uses `vault_glob` with pattern `**/2025-*.md`
 - `"Show me the complete structure of my vault"` - Uses `vault_tree`
@@ -192,7 +208,6 @@ Try these commands in your LLM client:
 |------|-------------|----------|
 | `vault_ls` | List folders and markdown files in a directory | Browse vault structure, navigate folders |
 | `vault_read` | Read markdown file content | Access note content for analysis |
-| `vault_write` | Create or update markdown files | Create new notes, update existing content |
 | `vault_glob` | Find files/directories matching glob pattern | Efficiently find files by pattern (e.g., `**/2025-*.md`) |
 | `vault_tree` | Get complete directory tree structure | Understand vault organization at a glance |
 | `vault_search` | Full-text search across all markdown files | Find notes by content, not just filenames |
@@ -208,11 +223,6 @@ List contents of a directory.
 Read content of a markdown file.
 - **Example:** `vault_read("Daily/2025-01-18.md")` - Read specific note
 - **Returns:** File content as string
-
-#### `vault_write(path: str, content: str)`
-Create or overwrite a markdown file.
-- **Example:** `vault_write("Ideas/new-idea.md", "# New Idea\n\nContent...")`
-- **Returns:** Success status
 
 #### `vault_glob(pattern: str)`
 Find files and directories matching a glob pattern.
