@@ -65,6 +65,29 @@ def test_sse_oauth_without_oauth_configuration_fails() -> None:
         )
 
 
+@pytest.mark.parametrize(
+    ("profile", "transport", "oauth_enabled", "extra"),
+    [
+        ("local-stdio-readonly", "stdio", "false", {}),
+        ("sse-dev", "sse", "false", {}),
+        ("sse-oauth", "sse", "true", {"MCP_OAUTH_ISSUER": "https://mcp.example.com"}),
+    ],
+)
+def test_write_access_mode_is_rejected_in_all_profiles(
+    profile: str, transport: str, oauth_enabled: str, extra: dict[str, str]
+) -> None:
+    env = {
+        "MCP_PROFILE": profile,
+        "MCP_TRANSPORT": transport,
+        "MCP_ACCESS_MODE": "write",
+        "MCP_OAUTH_ENABLED": oauth_enabled,
+        **extra,
+    }
+
+    with pytest.raises(ValueError, match="MCP_ACCESS_MODE=write is disabled"):
+        validate_startup_profile(env)
+
+
 def test_unknown_profile_fails() -> None:
     with pytest.raises(ValueError, match="unknown MCP_PROFILE"):
         validate_startup_profile({"MCP_PROFILE": "unsafe-sse"})

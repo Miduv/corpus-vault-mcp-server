@@ -37,8 +37,11 @@ class StartupProfile:
 
     @property
     def writes_allowed(self) -> bool:
-        """Return whether the private controlled-write path may run."""
-        return self.access_mode == WRITE_MODE
+        """Return whether this profile allows writes.
+
+        Patch 03 is read-only only, so validated profiles always return False.
+        """
+        return False
 
 
 def _env(env: Mapping[str, str] | None) -> Mapping[str, str]:
@@ -70,10 +73,8 @@ def validate_startup_profile(env: Mapping[str, str] | None = None) -> StartupPro
         raise ValueError(f"unknown MCP_PROFILE: {profile}")
 
     if access_mode == WRITE_MODE:
-        # Controlled write is intentionally not part of this patch. The private
-        # write helper remains guarded and no public write/apply tools are exported.
-        access_mode = WRITE_MODE
-    elif access_mode != READ_ONLY_MODE:
+        raise ValueError("MCP_ACCESS_MODE=write is disabled in all startup profiles")
+    if access_mode != READ_ONLY_MODE:
         raise ValueError(f"unsupported MCP_ACCESS_MODE: {access_mode}")
 
     if profile == LOCAL_STDIO_READONLY:
