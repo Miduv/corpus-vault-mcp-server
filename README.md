@@ -194,6 +194,7 @@ Try these commands in your LLM client:
 
 - `"Show all notes in my vault"` - Uses `vault_ls` or `vault_tree`
 - `"Read my daily note for today"` - Uses `vault_read`
+- `"Show metadata for my daily note"` - Uses `metadata_read`
 - `"List all notes in the Projects folder"` - Uses `vault_ls`
 - `"Find all notes from 2025"` - Uses `vault_glob` with pattern `**/2025-*.md`
 - `"Show me the complete structure of my vault"` - Uses `vault_tree`
@@ -208,6 +209,7 @@ Try these commands in your LLM client:
 |------|-------------|----------|
 | `vault_ls` | List folders and markdown files in a directory | Browse vault structure, navigate folders |
 | `vault_read` | Read markdown file content | Access note content for analysis |
+| `metadata_read` | Read markdown metadata without full content | Inspect frontmatter, headings, and note stats safely |
 | `vault_glob` | Find files/directories matching glob pattern | Efficiently find files by pattern (e.g., `**/2025-*.md`) |
 | `vault_tree` | Get complete directory tree structure | Understand vault organization at a glance |
 | `vault_search` | Full-text search across all markdown files | Find notes by content, not just filenames |
@@ -223,6 +225,13 @@ List contents of a directory.
 Read content of a markdown file.
 - **Example:** `vault_read("Daily/2025-01-18.md")` - Read specific note
 - **Returns:** File content as string
+
+#### `metadata_read(path: str)`
+Read markdown metadata without returning full note content.
+- **Example:** `metadata_read("Daily/2025-01-18.md")` - Inspect a note before reading it
+- **Returns:** Dictionary with relative `path`, `name`, `frontmatter`, `headings`, and `stats`
+- **Safety:** Uses the same path policy as `vault_read`; hidden paths, non-markdown files, absolute paths, and parent traversal are blocked
+- **Why it's useful:** Lets an LLM inspect structure and routing metadata without pulling the complete note body into context
 
 #### `vault_glob(pattern: str)`
 Find files and directories matching a glob pattern.
@@ -313,6 +322,7 @@ obsidian-agent/
 │   └── vault/
 │       └── service.py     # Vault operations
 ├── tests/
+│   ├── test_metadata_read.py
 │   └── test_vault_service.py
 ├── .github/
 │   └── workflows/         # CI/CD pipelines

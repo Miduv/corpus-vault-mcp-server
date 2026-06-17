@@ -105,6 +105,16 @@ def vault_read(path: str) -> dict[str, str]:
         raise ValueError(_safe_error_message(e)) from None
 
 
+@mcp.tool()
+def metadata_read(path: str) -> dict[str, Any]:
+    """Read markdown metadata without returning the full note content."""
+    svc = _get_vault_service()
+    try:
+        return svc.metadata_read(path=path)
+    except Exception as e:  # noqa: BLE001
+        raise ValueError(_safe_error_message(e)) from None
+
+
 def _vault_write_controlled(path: str, content: str) -> dict[str, bool]:
     """Isolated write path for future controlled-write modes; not a public MCP tool."""
     if not _writes_allowed():

@@ -31,6 +31,33 @@ class VaultService:
         target = self._policy.validate_read_path(path)
         return target.read_text(encoding="utf-8")
 
+    def metadata_read(self, path: str) -> dict[str, Any]:
+        """Read markdown file metadata without returning full note content.
+
+        The method intentionally returns only derived metadata and safe relative
+        vault paths. It reuses the same read path policy as `read()` and does not
+        expose absolute filesystem paths.
+        """
+        if not path or not path.strip():
+            raise ValueError("path must be non-empty")
+
+        target = self._policy.validate_read_path(path)
+        content = target.read_text(encoding="utf-8")
+        frontmatter = self._extract_frontmatter(content)
+
+        return {
+            "path": self._policy.relative_posix(target.resolve(strict=True)),
+            "name": target.name,
+            "has_frontmatter": bool(frontmatter),
+            "frontmatter": frontmatter,
+            "headings": self._extract_headings(content),
+            "stats": {
+                "size_bytes": target.stat().st_size,
+                "line_count": len(content.splitlines()),
+                "word_count": len(content.split()),
+            },
+        }
+
     def write(self, path: str, content: str) -> None:
         """Write markdown content to a file inside the vault.
 
@@ -80,6 +107,96 @@ class VaultService:
     def _is_markdown(self, path: Path) -> bool:
         """Return True if a filesystem path has a `.md` extension."""
         return path.suffix.lower() == ".md"
+
+    def _extract_frontmatter(self, content: str) -> dict[str, str | list[str] | bool | None]:
+        """Extract simple YAML-like frontmatter from markdown content.
+
+        This parser deliberately supports only a small safe subset: flat
+        `key: value` pairs, inline string lists, booleans, null values and
+        simple multiline lists. It avoids adding a YAML dependency and is enough
+        for metadata discovery.
+        """
+        lines = content.splitlines()
+        if not lines or lines[0].strip() != "---":
+            return {}
+
+        metadata_lines: list[str] = []
+        for line in lines[1:]:
+            if line.strip() == "---":
+                return self._parse_frontmatter_lines(metadata_lines)
+            metadata_lines.append(line)
+
+        return {}
+
+    def _parse_frontmatter_lines(
+        self, lines: list[str]
+    ) -> dict[str, str | list[str] | bool | None]:
+        metadata: dict[str, str | list[str] | bool | None] = {}
+        current_list_key: str | None = None
+
+        for raw_line in lines:
+            stripped = raw_line.strip()
+            if not stripped or stripped.startswith("#"):
+                continue
+
+            if stripped.startswith("- ") and current_list_key:
+                existing = metadata.setdefault(current_list_key, [])
+                if isinstance(existing, list):
+                    existing.append(stripped[2:].strip().strip("'\""))
+                continue
+
+            if ":" not in stripped:
+                current_list_key = None
+                continue
+
+            key, value = stripped.split(":", 1)
+            key = key.strip()
+            value = value.strip()
+            if not key:
+                current_list_key = None
+                continue
+
+            if not value:
+                metadata[key] = []
+                current_list_key = key
+                continue
+
+            metadata[key] = self._coerce_frontmatter_value(value)
+            current_list_key = None
+
+        return metadata
+
+    def _coerce_frontmatter_value(self, value: str) -> str | list[str] | bool | None:
+        lowered = value.lower()
+        if lowered == "true":
+            return True
+        if lowered == "false":
+            return False
+        if lowered in {"null", "none", "~"}:
+            return None
+        if value.startswith("[") and value.endswith("]"):
+            inner = value[1:-1].strip()
+            if not inner:
+                return []
+            return [item.strip().strip("'\"") for item in inner.split(",") if item.strip()]
+        return value.strip("'\"")
+
+    def _extract_headings(self, content: str) -> list[dict[str, int | str]]:
+        headings: list[dict[str, int | str]] = []
+        for line_number, line in enumerate(content.splitlines(), start=1):
+            stripped = line.lstrip()
+            if not stripped.startswith("#"):
+                continue
+            level = len(stripped) - len(stripped.lstrip("#"))
+            if 1 <= level <= 6 and len(stripped) > level and stripped[level] == " ":
+                headings.append(
+                    {
+                        "level": level,
+                        "text": stripped[level + 1 :].strip(),
+                        "line": line_number,
+                    }
+                )
+        return headings
 
     def _to_item(self, base: Path, entry: Path, type_: str) -> dict[str, str]:
         """Convert a filesystem entry to a serializable list item.
@@ -305,4 +422,3 @@ class VaultService:
             "matches": matches,
             "total_files": processed_files,
         }
-
